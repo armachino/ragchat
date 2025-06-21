@@ -1,0 +1,9 @@
+{
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.analysis.extraPaths": [
+        "./core"
+    ],
+    "python.analysis.indexing": true,
+    "python.analysis.autoSearchPaths": true,
+    "postman.settings.dotenv-detection-notification-visibility": false
+}
