@@ -1,0 +1,12 @@
+__pycache__
+.langgraph_api
+# Ignore all VSCode config files except settings.json for team consistency
+.vscode/*
+!.vscode/settings.json
+
+.env
+.pytest_cache
+langgraph_studio_
+.langgraph_api
+chroma_langchain_db
+models/
