@@ -1,34 +1,27 @@
 from core.utils.loader import get_loader_from_dir
-from core.schema import RagState, InputState, OutputState
-
-from langgraph.graph import StateGraph, START, END
+from core.utils.get_entry_script import get_entry_script_name
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.language_models import BaseChatModel
 from langchain_core.vectorstores import VectorStore
-from langchain.prompts import PromptTemplate
+from langchain_core.documents import Document
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
+# from pprint import pprint
+
+# from langgraph.checkpoint.memory import MemorySaver
 
 
 class RagAgent:
-    """
-    A state graph for a RAG agent that uses a chat prompt template and a regex parser.
-    """
-
     def __init__(
         self,
         llm_model: BaseChatModel,
         vector_store: VectorStore,
         docs_path: str,
-        prompt_template: PromptTemplate,
     ):
-        self.llm_model = llm_model
-        self.prompt_template = prompt_template
-        self.vector_store = vector_store
-
-        # Load documents from a URL
-        # docs = get_loader_from_url(
-        #     "https://lilianweng.github.io/posts/2023-06-23-agent/"
-        # )
+        self._vector_store = vector_store
         docs = get_loader_from_dir(docs_path)
 
         # Split documents into chunks
@@ -37,52 +30,63 @@ class RagAgent:
         )
         all_splits = text_splitter.split_documents(docs)
 
+        # print("all_splits___",all_splits)
         # Index chunks
         # Use the vector_store initialized with HuggingFaceEmbeddings
-        _ = self.vector_store.add_documents(documents=all_splits)
+        _ = self._vector_store.add_documents(documents=all_splits)
 
-        # Define prompt for question-answering
-        builder = StateGraph(
-            RagState, input_schema=InputState, output_schema=OutputState
+        # toolset = AgentToolset(vector_store=vector_store)
+        tools = [self._get_retrieve_tool(self._vector_store)]
+
+        # Check if running inside LangGraph Studio (entry ends with "main.py").
+        # If so, use MemorySaver as checkpointer; otherwise, omit it.
+        entry = get_entry_script_name()
+        if entry and entry.endswith("main.py"):
+            from langgraph.checkpoint.memory import MemorySaver
+            # print("***main.py****")
+            self._agent_executor = create_react_agent(
+                llm_model, tools, checkpointer=MemorySaver()
+            )
+        else:
+            # print("***langgraph studio****")
+            self._agent_executor = create_react_agent(llm_model, tools)
+
+    def _get_retrieve_tool(self, vector_store: VectorStore):
+        @tool
+        def retrieve(query: str) -> tuple[str, list[Document]]:
+            """Retrieve documents from vector store based on a query."""
+            if vector_store is None:
+                raise ValueError("Vector store is not available.")
+
+            # Retrieve documents using the passed vector_store
+            retrieved_docs = vector_store.similarity_search(query,k=3)
+            serialized = "\n\n".join(
+                f"Source: {doc.metadata}\nContent: {doc.page_content}"
+                for doc in retrieved_docs
+            )
+            # print(f"Retrieved documents: {serialized}")
+            return serialized, retrieved_docs
+
+        return retrieve
+
+    @property
+    def graph(self):
+        # The getter method that returns the workflow
+        return self._agent_executor
+
+    def run(self, question: str, thread_id: str = "abc123") -> str:
+        config = RunnableConfig(configurable={"thread_id": thread_id})
+        # for event in agent_executor.stream(
+        #     {"messages": [HumanMessage(content="Who is Armapopoli?")]},
+        #     stream_mode="values",
+        #     config=config,
+        # ):
+        #     event["messages"][-1].pretty_print()
+        respone = self._agent_executor.invoke(
+            {"messages": [HumanMessage(content=question)]}, config=config
         )
-        # Define the nodes
-        builder.add_node("retrieve", self.retrieve)  # type: ignore
-        builder.add_node("generate", self.generate)
-        # Define the edges
-        builder.add_edge(START, "retrieve")
-        builder.add_edge("retrieve", "generate")
-        builder.add_edge("generate", END)
-        self.graph = builder.compile()
-
-    # Define application steps
-    def retrieve(self, state: InputState) -> RagState:
-        # Use the vector_store initialized with HuggingFaceEmbeddings
-        retrieved_docs = self.vector_store.similarity_search(state.question)
-        return RagState(
-            question=state.question,
-            context=retrieved_docs,
-            answer="",  # Initially empty, will be filled in later
-        )
-
-    def generate(self, state: RagState) -> OutputState:
-        docs_content = "\n\n".join(doc.page_content for doc in state.context)
-        messages = self.prompt_template.invoke(
-            {"question": state.question, "context": docs_content}
-        )
-        response = self.llm_model.invoke(messages)
-        return OutputState(answer=response.content.__str__())
-        # return {"answer": response.content}
-
-    def run(self, question: str):
-        input_state_dict = {
-            "question": question,
-        }
-
-        input_state = InputState.model_validate(input_state_dict)
-        response = self.graph.invoke(
-            input_state.model_dump()  # Convert InputState to dict for invocation # type: ignore
-        )
-        print(response["answer"])
+        # pprint(respone["messages"][-1].content)
+        return respone["messages"][-1].content
 
 
 if __name__ == "__main__":
@@ -103,6 +107,6 @@ if __name__ == "__main__":
         llm_model=llm,
         vector_store=vector_store,
         docs_path="./docs",
-        prompt_template=prompt,
+        # prompt_template=prompt,
     )
-    agent.run("What is his internet status?")  # Example question
+    # agent.run("Tell me about the GWO")
