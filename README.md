@@ -121,10 +121,6 @@ This auto-runs the graph defined in `langgraph_studio.py`, skipping any manual c
 
 
 
-## 📝 License
-
-MIT License
-
 
 
 <!-- ## 👤 Author
